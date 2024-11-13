@@ -17,10 +17,10 @@ class Hunter {
         this.DESIRED_SPEED = 0.25;  // restores this speed with time
         this.TAU_SPEED = 0.01;     // how quick to restore the desired speed
 
-        this.CHASE_RADIUS = 1.5;   // sees prey within this radius
-        this.HABITAT_RADIUS = 3.0;    // gets pushed back if outside of habitat
+        this.CHASE_RADIUS = 0.5;   // sees prey within this radius
+        this.HABITAT_RADIUS = 1;    // gets pushed back if outside of habitat
 
-        this.CHASE_FACTOR = 0.3;
+        this.CHASE_FACTOR = 0.99;
         this.HABITAT_FACTOR = 1;
 
         this.enable = true;
@@ -30,32 +30,49 @@ class Hunter {
         frc = new Vector3();
 
         // Set up graphics
-        // Set up graphics
-        this.cone = new ConeGeometry(0.16, 0.36, 16);
-        this.color = new Color(0xf2b41a);
-        this.material = new MeshBasicMaterial({
+        // Set up graphics with glowing red material
+        this.cone = new ConeGeometry(0.04, 0.09, 4);
+        this.color = new Color(0xff0000); // Set to a strong red color
+        this.material = new MeshStandardMaterial({
             color: this.color,
-            wireframe: true});
+            emissive: new Color(0xff0000),  // Emissive red to make it glow
+            emissiveIntensity: 6,         // Increase intensity for more glow
+            wireframe: true
+        });
         this.mesh = new Mesh(this.cone, this.material);
         this.axis = new Vector3(0, 1, 0);
 
+        this.mouseTarget = new Vector3();
+
     }
+
+    setMousePosition(mousePos) {
+        this.mouseTarget.copy(mousePos); // Set the target position to the mouse position
+    }
+
     tick(delta){
         if (this.enable) {
             frc.set(0, 0, 0);
-            frc.addScaledVector(this.chase(pos, preyPos), this.CHASE_FACTOR);
+            // Calculate the direction towards the mouse target
+            const targetDirection = new Vector3().subVectors(this.mouseTarget, pos).normalize();
+            
+            // Apply a force to steer towards the mouse position
+            frc.addScaledVector(targetDirection, this.CHASE_FACTOR);
+
+            // Additional forces (e.g., staying within habitat and restoring velocity)
             frc.addScaledVector(this.constrainToSphere(this.HABITAT_RADIUS), this.HABITAT_FACTOR);
             frc.addScaledVector(this.restoreVelocity(), delta / this.TAU_SPEED);
 
+            // Update velocity and position
             vel.addScaledVector(frc, delta);
             pos.addScaledVector(vel, delta);
 
-            // Update mesh
+            // Update mesh position and orientation
             this.mesh.position.copy(pos);
             let colorShift = Math.min(8 * Math.sqrt(nPrey), 50);
             this.material.color.setHSL(0, 0, (40 + colorShift) / 100);
             quickVec1.copy(vel);
-            this.mesh.quaternion.setFromUnitVectors(this.axis, quickVec1.normalize()); // align cone with the velocity
+            this.mesh.quaternion.setFromUnitVectors(this.axis, quickVec1.normalize()); // Align cone with the velocity
         }
         this.mesh.visible = this.enable;
     }

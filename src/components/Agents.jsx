@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import {
     BufferAttribute,
     BufferGeometry, Color,
@@ -10,32 +11,39 @@ import {UnitGrid} from "./Grid.jsx";
 import {pointInSphere} from "./pointInSphere.jsx";
 
 const vertexShader = `
-  uniform float size;
-  attribute float clock;
-  varying float vClock;
+    uniform float size;
+    attribute float clock;
+    attribute float isFleeing;  // Attribute for per-vertex fleeing data
+    varying float vClock;
+    varying float vIsFleeing;   // Pass isFleeing to the fragment shader
 
-  void main() {
-    vClock = clock;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = size * (300.0 / -mvPosition.z);
-    gl_Position = projectionMatrix * mvPosition;
-  }
+    void main() {
+        vClock = clock;
+        vIsFleeing = isFleeing;  // Assign the attribute value to the varying
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * (300.0 / -mvPosition.z);
+        gl_Position = projectionMatrix * mvPosition;
+    }
 `;
 
 const fragmentShader = `
-    uniform vec3 bodyColor;
-    uniform vec3 fireColor;
+    uniform vec3 bodyColor;    // Regular color
+    uniform vec3 fleeColor;    // Bright fleeing color (orange-red)
     uniform float bodyOpacity;
     varying float vClock;
+    varying float vIsFleeing;
 
     void main() {
         float mixFactor = smoothstep(0.0, 1.0, vClock);
-        vec3 color = mix(vec3(0.0, 0.5, 1.0), vec3(1.0, 1.0, 0.0), mixFactor); // Blue to Yellow
-        color = mix(color, vec3(0.0, 1.0, 0.3), mixFactor * 0.5); // Final transition to Green
+        vec3 baseColor = mix(vec3(0.0, 0.7, 1.5), vec3(2.0, 2.0, 0.0), mixFactor); // Blue to Yellow
+        baseColor = mix(baseColor, vec3(0.0, 1.5, 0.6), mixFactor * 0.7); // Transition to Green
+        
+        // Mix baseColor with fleeColor when fleeing
+        vec3 color = mix(baseColor, fleeColor * 1.5, vIsFleeing);  // Double fleeColor intensity
 
-        // Create a smooth edge falloff
+        // Stronger glow effect if agent is fleeing
         float dist = length(gl_PointCoord - vec2(0.5));
-        float alpha = 1.0 - smoothstep(0.45, 0.5, dist); // Smoother radial fade
+        float alpha = (1.0 - smoothstep(0.25, 0.5, dist)) * (vIsFleeing * 4.0 + 1.0); // Triple alpha for fleeing agents
 
         gl_FragColor = vec4(color, alpha * bodyOpacity);
     }
@@ -53,20 +61,20 @@ class Agents{
         this.TAU_SPEED = 0.01;     // how quick to restore the desired speed
 
         this.FIRE_CYCLE = 3;     // how often to fire, s
-        this.NUDGE_FACTOR = 0.01;
+        this.NUDGE_FACTOR = 0.02;
         this.NUDGE_LIMIT = 3;           // max number of times an agent can nudge its clock per frame
         this.CONFUSION_FACTOR = 0.2;   // confuse the clock when fleeing
 
-        this.VISIBLE_RADIUS = 0.2;   // align and cohere with other agents in this range
-        this.PROTECTED_RADIUS = 0.1; // avoid other agents in this range
-        this.FLEE_RADIUS = 0.50;       // flee from hunter in this range
-        this.HABITAT_RADIUS = 3;    // gets pushed back if outside of habitat
+        this.VISIBLE_RADIUS = 0.15;   // align and cohere with other agents in this range
+        this.PROTECTED_RADIUS = 0.05; // avoid other agents in this range
+        this.FLEE_RADIUS = 0.60;       // flee from hunter in this range
+        this.HABITAT_RADIUS = 1.6;    // gets pushed back if outside of habitat
         this.USE_GRID = true;
 
-        this.ALIGN_FACTOR = 0.2;
+        this.ALIGN_FACTOR = 0.1;
         this.COHERE_FACTOR = 10;
-        this.AVOID_FACTOR = 60;
-        this.FLEE_FACTOR = 6;  // flee from hunter
+        this.AVOID_FACTOR = 30;
+        this.FLEE_FACTOR = 3;  // flee from hunter
         this.HABITAT_FACTOR = 0.1;
 
         this.hunterPos = new Vector3;   // remembers hunter's position
@@ -86,7 +94,7 @@ class Agents{
 
         // Populate the sphere with Agents with random pos and vel
         for (let ID = 0; ID < this.count; ID++){
-            pointInSphere(this.HABITAT = 3).toArray(this.posArray, ID*3);
+            pointInSphere(this.HABITAT = 1.8).toArray(this.posArray, ID*3);
             pointInSphere().normalize().multiplyScalar(this.DESIRED_SPEED/5).toArray(this.velArray,ID*3); // random vel
             this.clockArray[ID] = Math.random()*this.FIRE_CYCLE; // initialize clock with a random value
         }
@@ -94,10 +102,11 @@ class Agents{
         //Shaders
         this.uniforms = {
             fireCycle: { value: this.FIRE_CYCLE },
-            size: { value: 0.075 * window.devicePixelRatio }, // Increase for larger particles
+            size: { value: 0.04  * window.devicePixelRatio }, // Increase for larger particles
             bodyColor: { value: new Color(0x70ffa1) },
+            fleeColor: { value: new THREE.Color(0xff4500) },
             fireColor: { value: new Color(0xff747b) },
-            bodyOpacity: { value: 0.5 }, // Increase opacity for better visibility
+            bodyOpacity: { value: 0.8 }, // Increase opacity for better visibility
             fireR1: { value: 0.015 },
             fireR2: { value: 0.0015 },
             aspect: { value: 1.0 }
@@ -119,6 +128,10 @@ class Agents{
         this.geometry.setAttribute('clock', this.clockAttribute );
         this.mesh = new Points(this.geometry, shaderMaterial);
 
+        this.isFleeingArray = new Float32Array(count);
+        this.isFleeingAttribute = new BufferAttribute(this.isFleeingArray, 1).setUsage(DynamicDrawUsage);
+        this.geometry.setAttribute('isFleeing', this.isFleeingAttribute);
+
     
     }
 
@@ -139,6 +152,8 @@ class Agents{
             frcVec.addScaledVector(this.constrainToSphere(ID, this.HABITAT_RADIUS), this.HABITAT_FACTOR);
             frcVec.addScaledVector(this.restoreVelocity(ID), delta/this.TAU_SPEED); // Exponentially restore velocity
             frcVec.toArray(this.frcArray, ID*3); // Write down computed force
+
+            this.isFleeingArray[ID] = this.fleeing.includes(ID) ? 1.0 : 0.0;
         }
         // Update velocity and position based on forces
         for (let ID = 0; ID < this.count; ID++){
@@ -202,25 +217,28 @@ class Agents{
      * Check hunter's position, give chased agents to the hunter and determine which agents have to flee
      * @param hunter Hunter object
      */
-    checkForHunter(hunter){
+    checkForHunter(hunter) {
         this.fleeing = [];
         if (hunter.enable) {
-            this.hunterPos = hunter.getPos(); // remember hunter's position
+            this.hunterPos = hunter.getPos();  // Track hunter's position
             let chased = this.grid.findNear(this.hunterPos, this.posArray, hunter.CHASE_RADIUS);
-            let chasedPos = [];
-            let chasedVel = [];
-
             let thresholdSq = this.FLEE_RADIUS * this.FLEE_RADIUS;
+            
             for (let [ID, distSq] of chased) {
-                chasedPos.push(this.posArray[ID], this.posArray[ID + 1], this.posArray[ID + 2]); // x, y, z
-                chasedVel.push(this.velArray[ID], this.velArray[ID + 1], this.velArray[ID + 2]); // vx, vy, vz
                 if (distSq < thresholdSq) {
                     this.fleeing.push(ID);
+                    this.isFleeingArray[ID] = 1.0;  // Mark as fleeing
+                } else {
+                    this.isFleeingArray[ID] = 0.0;  // Not fleeing
                 }
             }
-            hunter.givePrey(chasedPos, chasedVel);
+        } else {
+            // Reset fleeing status if the hunter is disabled
+            this.isFleeingArray.fill(0.0);
         }
+        this.mesh.geometry.attributes.isFleeing.needsUpdate = true;
     }
+    
     flee(ID){
         quickVec1.set(0, 0, 0);
         if (this.fleeing.includes(ID)) {

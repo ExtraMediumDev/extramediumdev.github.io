@@ -62,7 +62,7 @@ class UnitGrid {
 
     gridSearch(posArray, threshold) {
         this.resetCells();
-        let optimalPartition = Math.floor(3 / threshold);
+        let optimalPartition = Math.floor(4 / threshold);
         if (this.n !== optimalPartition) {
             this.rebuild(optimalPartition);
         }
@@ -158,6 +158,9 @@ class UnitGrid {
     }
 
     findCell(x, y, z) {
+        if (this.cellSize === null || this.cellSize === 0) {
+            return 0,0,0;
+        }
         return [
             Math.floor((x + 1) / this.cellSize),
             Math.floor((y + 1) / this.cellSize),
@@ -169,7 +172,7 @@ class UnitGrid {
         if (i < 0 || i >= this.n ||
             j < 0 || j >= this.n ||
             k < 0 || k >= this.n) {
-            return this.nnn;
+            return -1; 
         }
         return i + j * this.n + k * this.nn;
     }
@@ -187,7 +190,10 @@ class UnitGrid {
         for (let l = i - window; l <= i + window; l++) {
             for (let m = j - window; m <= j + window; m++) {
                 for (let n = k - window; n <= k + window; n++) {
-                    neighbors.push(this.hash(l, m, n));
+                    const hashedIndex = this.hash(l, m, n);
+                    if (typeof hashedIndex === 'number' && hashedIndex >= 0 && hashedIndex < this.cellNeighbors.length) {
+                        neighbors.push(hashedIndex);
+                    }
                 }
             }
         }
